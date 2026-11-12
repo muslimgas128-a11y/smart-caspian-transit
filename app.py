@@ -13,11 +13,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ORS_API_KEY = os.getenv("ORS_API_KEY", "").strip()
-YANDEX_MAPS_API_KEY = os.getenv("YANDEX_MAPS_API_KEY", "").strip()
 
 
 app = Flask(__name__)
-DB = "transit.db"
+DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "transit.db")
 
 
 # ---------------- DATABASE ----------------
@@ -279,6 +278,43 @@ def get_rail_route(order):
     return make_feature(coordinates, "Железная дорога")
 
 
+def get_multimodal_route(order):
+    """Демонстрационный мультимодальный маршрут: море до Баку + авто до пункта назначения."""
+    con = db()
+    baku_row = con.execute(
+        "SELECT name,country,lat,lon FROM cities WHERE name LIKE ? ORDER BY id LIMIT 1",
+        ("%Баку%",)
+    ).fetchone()
+    con.close()
+    if not baku_row:
+        raise ValueError("Для мультимодального маршрута добавьте город Баку")
+
+    baku = dict(baku_row)
+    origin = {
+        "origin_lat": order["origin_lat"], "origin_lon": order["origin_lon"],
+        "destination_lat": baku["lat"], "destination_lon": baku["lon"]
+    }
+    destination = {
+        "origin_lat": baku["lat"], "origin_lon": baku["lon"],
+        "destination_lat": order["destination_lat"],
+        "destination_lon": order["destination_lon"]
+    }
+
+    sea = get_sea_route(origin)
+    road = get_road_route(destination)
+    sea_coords = sea.get("geometry", {}).get("coordinates", [])
+    road_coords = road.get("geometry", {}).get("coordinates", [])
+    if not sea_coords or not road_coords:
+        raise ValueError("Не удалось построить один из участков мультимодального маршрута")
+
+    # Убираем повторную точку стыка, если координаты совпадают.
+    if sea_coords[-1] == road_coords[0]:
+        coordinates = sea_coords + road_coords[1:]
+    else:
+        coordinates = sea_coords + road_coords
+    return make_feature(coordinates, "Мультимодальный")
+
+
 @app.get("/api/route/<int:order_id>")
 def api_route(order_id):
     order = next(
@@ -301,10 +337,11 @@ def api_route(order_id):
         elif transport == "Железная дорога":
             route = get_rail_route(order)
 
+        elif transport == "Мультимодальный":
+            route = get_multimodal_route(order)
+
         else:
-            return jsonify({
-                "error": "Мультимодальный маршрут пока требует настройки отдельных участков"
-            }), 400
+            return jsonify({"error": "Неизвестный тип транспорта"}), 400
 
         return jsonify(route)
 
@@ -339,7 +376,7 @@ def api_data():
 
 @app.post("/api/cities")
 def add_city():
-    data = request.get_json(silent=True) or {}
+    data = request.json or {}
 
     try:
         name = str(data["name"]).strip()
@@ -347,7 +384,7 @@ def add_city():
         lat = float(data["lat"])
         lon = float(data["lon"])
 
-        if not name or not country:
+        if not name or not country or len(name) > 100 or len(country) > 100:
             raise ValueError()
 
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
@@ -357,6 +394,13 @@ def add_city():
         return jsonify({"error": "Проверьте данные города"}), 400
 
     con = db()
+    duplicate = con.execute(
+        "SELECT id FROM cities WHERE lower(name)=lower(?) AND lower(country)=lower(?)",
+        (name, country)
+    ).fetchone()
+    if duplicate:
+        con.close()
+        return jsonify({"error": "Такой город уже добавлен"}), 409
     cur = con.execute(
         "INSERT INTO cities (name,country,lat,lon) VALUES (?,?,?,?)",
         (name, country, lat, lon)
@@ -383,16 +427,17 @@ def delete_city(city_id):
             "error": "Нельзя удалить город, который используется в заказах"
         }), 400
 
-    con.execute("DELETE FROM cities WHERE id=?", (city_id,))
+    cur = con.execute("DELETE FROM cities WHERE id=?", (city_id,))
     con.commit()
     con.close()
-
+    if cur.rowcount == 0:
+        return jsonify({"error": "Город не найден"}), 404
     return jsonify({"message": "Город удалён"})
 
 
 @app.post("/api/orders")
 def add_order():
-    data = request.get_json(silent=True) or {}
+    data = request.json or {}
 
     try:
         cargo = str(data["cargo"]).strip()
@@ -404,7 +449,9 @@ def add_order():
         port = float(data.get("port_load", 20))
         weather = float(data.get("weather_risk", 10))
 
-        if not cargo or origin == destination:
+        if not cargo or len(cargo) > 160 or origin == destination:
+            raise ValueError()
+        if transport not in {"Море", "Железная дорога", "Авто", "Мультимодальный"}:
             raise ValueError()
 
         if weight <= 0 or eta <= 0:
@@ -444,7 +491,7 @@ def add_order():
 
 @app.patch("/api/orders/<int:order_id>")
 def update_order(order_id):
-    data = request.get_json(silent=True) or {}
+    data = request.json or {}
     status = data.get("status")
 
     allowed = ["В пути", "На таможне", "Доставлен", "Задержан"]
@@ -469,9 +516,11 @@ def update_order(order_id):
 @app.delete("/api/orders/<int:order_id>")
 def delete_order(order_id):
     con = db()
-    con.execute("DELETE FROM orders WHERE id=?", (order_id,))
+    cur = con.execute("DELETE FROM orders WHERE id=?", (order_id,))
     con.commit()
     con.close()
+    if cur.rowcount == 0:
+        return jsonify({"error": "Заказ не найден"}), 404
     return jsonify({"message": "Заказ удалён"})
 
 
@@ -485,162 +534,142 @@ PAGE = r"""
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Smart Caspian Transit</title>
 
+<link rel="stylesheet"
+ href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
 <style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
 :root {
-    --bg:#080d18;
-    --panel:#111a2b;
-    --panel2:#172338;
-    --border:#263650;
-    --text:#edf4ff;
-    --muted:#8495ae;
-    --blue:#3987ff;
-    --cyan:#36d5e8;
-    --green:#36d99a;
-    --orange:#ffb454;
-    --red:#ff647c;
+    --bg:#f5f6f7;
+    --surface:#ffffff;
+    --surface-soft:#fafafa;
+    --panel:#ffffff;
+    --panel2:#f4f3f0;
+    --border:#e8e7e3;
+    --text:#252720;
+    --muted:#85877f;
+    --gold:#b59a68;
+    --gold-dark:#92784d;
+    --green:#43856a;
+    --orange:#b88645;
+    --red:#b85f5f;
+    --shadow:0 8px 28px rgba(31,35,28,.045);
 }
 * { box-sizing:border-box; }
+html { scroll-behavior:smooth; }
 body {
     margin:0;
     background:var(--bg);
     color:var(--text);
-    font-family:Inter,Arial,sans-serif;
+    font-family:'DM Sans',Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
 }
 button,input,select { font:inherit; }
 button {
     cursor:pointer;
-    border:0;
+    border:1px solid transparent;
     border-radius:9px;
-    padding:10px 14px;
-    color:white;
-    background:var(--blue);
+    padding:10px 15px;
+    color:#fff;
+    background:var(--gold);
+    font-weight:600;
+    transition:background .18s ease,transform .18s ease,box-shadow .18s ease;
 }
-button:hover { filter:brightness(1.15); }
+button:hover { background:var(--gold-dark); box-shadow:0 5px 14px rgba(146,120,77,.16); }
+button:active { transform:translateY(1px); }
+button:disabled { opacity:.55; cursor:not-allowed; box-shadow:none; }
 input,select {
-    width:100%;
-    padding:10px;
-    border-radius:8px;
-    border:1px solid var(--border);
-    background:#0b1423;
-    color:white;
+    width:100%; min-width:0; padding:11px 12px;
+    border-radius:9px; border:1px solid #e5e4df;
+    background:#fff; color:var(--text); outline:none;
+    transition:border-color .18s ease,box-shadow .18s ease;
 }
-label {
-    display:block;
-    color:var(--muted);
-    font-size:12px;
-    margin:12px 0 6px;
-}
+input:focus,select:focus { border-color:var(--gold); box-shadow:0 0 0 3px rgba(181,154,104,.13); }
+input::placeholder { color:#b1b2ac; }
+label { display:block; color:var(--muted); font-size:11px; font-weight:600; letter-spacing:.025em; margin:13px 0 6px; }
 .topbar {
-    padding:18px 25px;
-    border-bottom:1px solid var(--border);
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap:15px;
+    min-height:82px; padding:17px clamp(18px,3vw,42px);
+    background:rgba(255,255,255,.94); border-bottom:1px solid var(--border);
+    display:flex; align-items:center; justify-content:space-between; gap:16px;
+    position:sticky; top:0; z-index:500; backdrop-filter:blur(12px);
 }
-.logo { font-size:20px; font-weight:800; }
-.logo span { color:var(--cyan); }
-.subtitle { color:var(--muted); font-size:12px; margin-top:5px; }
-.live { color:var(--green); font-size:12px; }
+.logo { font-family:'Manrope',sans-serif; font-size:18px; font-weight:800; letter-spacing:.055em; }
+.logo span { color:var(--gold); }
+.subtitle { color:var(--muted); font-size:11px; margin-top:4px; letter-spacing:.04em; }
+.live { color:var(--green); font-size:11px; font-weight:700; letter-spacing:.08em; white-space:nowrap; }
 .layout {
-    padding:20px;
-    display:grid;
-    grid-template-columns:minmax(0,1fr) 340px;
-    gap:18px;
+    width:min(1600px,100%); margin:0 auto; padding:26px clamp(14px,2.5vw,34px) 40px;
+    display:grid; grid-template-columns:minmax(0,1fr) 350px; gap:20px; align-items:start;
 }
-.stats {
-    display:grid;
-    grid-template-columns:repeat(4,1fr);
-    gap:12px;
-    margin-bottom:15px;
-}
-.card,.panel {
-    background:var(--panel);
-    border:1px solid var(--border);
-    border-radius:14px;
-}
-.stat { padding:16px; }
-.stat small { color:var(--muted); }
-.stat strong {
-    display:block;
-    font-size:27px;
-    margin-top:9px;
-}
+.stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:13px; margin-bottom:17px; }
+.card,.panel { background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow); }
+.stat { padding:18px 19px; min-height:104px; position:relative; overflow:hidden; }
+.stat:after { content:''; position:absolute; right:0; top:0; width:3px; height:100%; background:linear-gradient(180deg,#d6c5a4,transparent); opacity:.8; }
+.stat small { color:var(--muted); font-size:11px; font-weight:600; }
+.stat strong { display:block; font-family:'Manrope',sans-serif; font-size:29px; font-weight:700; margin-top:9px; letter-spacing:-.04em; }
 .map-card { overflow:hidden; }
 .section-head {
-    padding:15px 17px;
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    border-bottom:1px solid var(--border);
+    min-height:58px; padding:14px 18px; display:flex; align-items:center; justify-content:space-between; gap:12px;
+    border-bottom:1px solid var(--border); background:linear-gradient(180deg,#fff,#fdfdfc);
 }
-.section-head h3 { margin:0; font-size:15px; }
-#map { height:470px; background:#0d1a2b; }
-.side { display:flex; flex-direction:column; gap:15px; }
-.panel { padding:16px; }
-.panel h3 { margin:0 0 12px; font-size:15px; }
-.form-grid {
-    display:grid;
-    grid-template-columns:1fr 1fr;
-    gap:0 10px;
-}
+.section-head h3 { margin:0; font-family:'Manrope',sans-serif; font-size:13px; font-weight:800; letter-spacing:.025em; }
+#map { height:470px; background:#e9ece9; }
+.side { display:flex; flex-direction:column; gap:15px; min-width:0; }
+.panel { padding:17px; }
+.panel h3 { margin:0 0 13px; font-family:'Manrope',sans-serif; font-size:13px; font-weight:800; }
+.form-grid { display:grid; grid-template-columns:1fr 1fr; gap:0 10px; }
 .full { grid-column:1/-1; }
-.primary { width:100%; margin-top:13px; }
-.secondary { background:var(--panel2); }
-.danger { background:#6f293a; }
-.orders { margin-top:17px; }
-.order {
-    padding:13px;
-    border-bottom:1px solid var(--border);
-    cursor:pointer;
+.primary { width:100%; margin-top:14px; }
+.secondary { color:#655a47; background:#f2eee6; border-color:#e9e2d4; }
+.secondary:hover { color:#fff; background:var(--gold-dark); }
+.danger { color:#a44e4e; background:#fbf0ef; border-color:#f1dfdd; }
+.danger:hover { color:#fff; background:#a95d59; }
+.orders { margin-top:17px; overflow:hidden; }
+.order { padding:14px 17px; border-bottom:1px solid #efeee9; cursor:pointer; transition:background .15s ease; }
+.order:last-child { border-bottom:0; }
+.order:hover,.order.selected { background:#faf8f3; }
+.order.selected { box-shadow:inset 3px 0 var(--gold); }
+.order-top { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.order-top strong { font-size:12px; font-weight:700; }
+.order small { color:var(--muted); font-size:11px; }
+.route { font-size:12px; margin:8px 0; color:#4b4d46; }
+.status { font-size:10px; font-weight:700; padding:5px 9px; border-radius:20px; background:#f0f0ed; color:#77796f; white-space:nowrap; }
+.status.green { color:#39785d; background:#eaf4ee; }
+.status.orange { color:#9b7138; background:#f8f0e3; }
+.status.red { color:#a94f4f; background:#faecea; }
+.detail-line { display:flex; justify-content:space-between; align-items:flex-start; padding:9px 0; border-bottom:1px solid #efeee9; font-size:11px; gap:12px; }
+.detail-line span:first-child { color:var(--muted); flex:0 0 auto; }
+.detail-line strong { text-align:right; font-weight:700; overflow-wrap:anywhere; }
+.empty { color:var(--muted); font-size:12px; line-height:1.6; }
+.city-row { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:9px 0; border-bottom:1px solid #efeee9; font-size:11px; }
+.city-row:last-child { border-bottom:0; }
+.city-row button { padding:5px 9px; font-size:12px; }
+.notice { color:var(--muted); font-size:10px; line-height:1.5; }
+#toast {
+    position:fixed; right:22px; bottom:22px; z-index:2000; max-width:min(420px,calc(100vw - 32px));
+    padding:13px 16px; border-radius:11px; color:#fff; background:#34372f;
+    box-shadow:0 12px 32px rgba(0,0,0,.16); font-size:12px; opacity:0; transform:translateY(10px);
+    pointer-events:none; transition:opacity .2s ease,transform .2s ease;
 }
-.order:hover,.order.selected { background:#1b2c46; }
-.order-top {
-    display:flex;
-    justify-content:space-between;
-    gap:10px;
-}
-.order small { color:var(--muted); }
-.route { font-size:13px; margin:9px 0; }
-.status {
-    font-size:11px;
-    padding:5px 8px;
-    border-radius:20px;
-    background:#243750;
-    white-space:nowrap;
-}
-.status.green { color:var(--green); }
-.status.orange { color:var(--orange); }
-.status.red { color:var(--red); }
-.detail-line {
-    display:flex;
-    justify-content:space-between;
-    padding:9px 0;
-    border-bottom:1px solid var(--border);
-    font-size:13px;
-    gap:10px;
-}
-.detail-line span:first-child { color:var(--muted); }
-.detail-line strong { text-align:right; }
-.empty { color:var(--muted); font-size:13px; }
-.city-row {
-    display:flex;
-    justify-content:space-between;
-    gap:8px;
-    padding:8px 0;
-    border-bottom:1px solid var(--border);
-    font-size:13px;
-}
-.city-row button { padding:5px 8px; }
-.notice { color:var(--muted); font-size:11px; line-height:1.5; }
-@media(max-width:900px) {
-    .layout { grid-template-columns:1fr; }
-}
-@media(max-width:600px) {
-    .stats { grid-template-columns:1fr 1fr; }
-    .topbar { padding:15px; }
-    .layout { padding:10px; }
-    #map { height:350px; }
+#toast.show { opacity:1; transform:translateY(0); }
+#toast.error { background:#994e4b; }
+.leaflet-container { font-family:'DM Sans',Arial,sans-serif; }
+.leaflet-control-layers,.leaflet-control-zoom a { border:1px solid #e5e3dd!important; box-shadow:0 3px 12px rgba(0,0,0,.07)!important; }
+.leaflet-popup-content-wrapper,.leaflet-popup-tip { background:#fff; color:var(--text); }
+@media(max-width:1050px) { .layout { grid-template-columns:minmax(0,1fr) 320px; } }
+@media(max-width:900px) { .layout { grid-template-columns:1fr; } .side { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; } }
+@media(max-width:620px) {
+    .stats { grid-template-columns:1fr 1fr; gap:9px; }
+    .stat { padding:14px; min-height:90px; }
+    .stat strong { font-size:24px; }
+    .topbar { min-height:70px; padding:13px 15px; }
+    .logo { font-size:15px; }
+    .subtitle { font-size:9px; }
+    .layout { padding:13px 10px 28px; gap:13px; }
+    #map { height:360px; }
+    .side { display:flex; }
+    .section-head { padding:12px 14px; }
+    .order { padding:12px 13px; }
 }
 </style>
 </head>
@@ -651,7 +680,7 @@ label {
         <div class="logo">SMART <span>CASPIAN</span> TRANSIT</div>
         <div class="subtitle">Predictive logistics monitoring platform</div>
     </div>
-    <div class="live">● SYSTEM ONLINE</div>
+    <div class="live">● ПАНЕЛЬ УПРАВЛЕНИЯ</div>
 </header>
 
 <main class="layout">
@@ -678,7 +707,7 @@ label {
     <div class="card map-card">
         <div class="section-head">
             <h3>Карта транспортного коридора</h3>
-            <span class="live">● LIVE MAP</span>
+            <span class="live">TRANSPORT MAP</span>
         </div>
         <div id="map"></div>
     </div>
@@ -686,7 +715,7 @@ label {
     <div class="card orders">
         <div class="section-head">
             <h3>Транспортные заказы</h3>
-            <button class="secondary" onclick="loadData()">Обновить</button>
+            <button class="secondary" onclick="refreshData()">Обновить</button>
         </div>
         <div id="ordersList"></div>
     </div>
@@ -769,61 +798,66 @@ label {
 </aside>
 </main>
 
-<script src="https://api-maps.yandex.ru/2.1/?apikey=__YANDEX_MAPS_API_KEY__&lang=ru_RU" type="text/javascript"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+<div id="toast" role="status" aria-live="polite"></div>
 <script>
-let map = null;
-let mapObjects = [];
+let toastTimer = null;
+function notify(message, isError=false) {
+    const el = document.getElementById("toast");
+    if (!el) return;
+    el.textContent = message;
+    el.className = isError ? "show error" : "show";
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.className = ""; }, 3200);
+}
 
-function initMap() {
-    if (!window.ymaps) {
-        document.getElementById("map").innerHTML =
-            '<div style="padding:20px;color:#ffb454">Не удалось загрузить Яндекс Карты. Проверьте YANDEX_MAPS_API_KEY в настройках Render.</div>';
-        return;
+const map = L.map("map").setView([35, 55], 4);
+
+L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+    subdomains: "abcd",
+    maxZoom: 20,
+    attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
+}).addTo(map);
+
+const railwayLayer = L.tileLayer(
+    "https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png",
+    {
+        attribution: "OpenRailwayMap",
+        maxZoom: 19
     }
+);
 
-    map = new ymaps.Map("map", {
-        center: [35, 55],
-        zoom: 4,
-        controls: ["zoomControl", "typeSelector", "fullscreenControl"]
-    }, {
-        suppressMapOpenBlock: true
-    });
-}
-
-function clearMapObjects() {
-    if (!map) return;
-    map.geoObjects.removeAll();
-    mapObjects = [];
-}
+L.control.layers(
+    null,
+    {"Железнодорожные пути": railwayLayer}
+).addTo(map);
 
 let cities = [];
 let orders = [];
-let markers = [];
-let routeLayer = null;
+let markersLayer = L.layerGroup().addTo(map);
+let routesLayer = L.layerGroup().addTo(map);
 let selectedId = null;
+let renderToken = 0;
 
 async function api(url, method="GET", body=null) {
-    const options = {method, headers: {}};
-    if (body) {
+    const options = {method, headers: {"Accept": "application/json"}};
+    if (body !== null) {
         options.headers["Content-Type"] = "application/json";
         options.body = JSON.stringify(body);
     }
-
     const response = await fetch(url, options);
-    const raw = await response.text();
+    const contentType = response.headers.get("content-type") || "";
     let data;
-
-    try {
-        data = JSON.parse(raw);
-    } catch (error) {
-        throw new Error(
-            `Сервер вернул не JSON (HTTP ${response.status}). ` +
-            `Проверь адрес API и журнал сервера. ${raw.slice(0, 180)}`
-        );
+    if (contentType.includes("application/json")) {
+        data = await response.json();
+    } else {
+        const raw = await response.text();
+        throw new Error(response.ok
+            ? "Сервер вернул неожиданный ответ. Проверьте Flask и адрес API."
+            : `Ошибка сервера (${response.status}). ${raw.slice(0, 160)}`);
     }
-
-    if (!response.ok) throw new Error(data.error || "Ошибка запроса");
+    if (!response.ok) throw new Error(data.error || `Ошибка запроса (${response.status})`);
     return data;
 }
 
@@ -839,6 +873,15 @@ function statusClass(status) {
     if (status === "Задержан") return "red";
     if (status === "На таможне") return "orange";
     return "";
+}
+
+async function refreshData() {
+    try {
+        await loadData();
+        notify("Данные обновлены");
+    } catch (error) {
+        notify(error.message, true);
+    }
 }
 
 async function loadData() {
@@ -868,12 +911,19 @@ async function loadData() {
 }
 
 function renderCities() {
+    const originSelect = document.getElementById("originSelect");
+    const destinationSelect = document.getElementById("destinationSelect");
+    const oldOrigin = originSelect.value;
+    const oldDestination = destinationSelect.value;
     const options = cities.map(c =>
         `<option value="${c.id}">${escapeHtml(c.name)}, ${escapeHtml(c.country)}</option>`
     ).join("");
 
-    document.getElementById("originSelect").innerHTML = options;
-    document.getElementById("destinationSelect").innerHTML = options;
+    originSelect.innerHTML = options || '<option value="">Сначала добавьте город</option>';
+    destinationSelect.innerHTML = options || '<option value="">Сначала добавьте город</option>';
+    if (cities.some(c => String(c.id) === oldOrigin)) originSelect.value = oldOrigin;
+    if (cities.some(c => String(c.id) === oldDestination)) destinationSelect.value = oldDestination;
+    document.querySelector('#orderForm button[type="submit"]').disabled = cities.length < 2;
 
     document.getElementById("citiesList").innerHTML = cities.map(c => `
         <div class="city-row">
@@ -908,58 +958,47 @@ function renderOrders() {
 
 
 async function renderMap() {
-    if (!map) return;
-    clearMapObjects();
+    const token = ++renderToken;
+    markersLayer.clearLayers();
+    routesLayer.clearLayers();
 
     cities.forEach(city => {
-        const marker = new ymaps.Placemark(
-            [Number(city.lat), Number(city.lon)],
-            {
-                balloonContentHeader: escapeHtml(city.name),
-                balloonContentBody: escapeHtml(city.country),
-                hintContent: `${escapeHtml(city.name)}, ${escapeHtml(city.country)}`
-            },
-            { preset: "islands#blueCircleDotIcon" }
-        );
-        map.geoObjects.add(marker);
-        mapObjects.push(marker);
+        const marker = L.marker([city.lat, city.lon]).addTo(markersLayer);
+        marker.bindPopup(`<b>${escapeHtml(city.name)}</b><br>${escapeHtml(city.country)}`);
     });
 
     const colors = {
-        "Море": "#36d5e8",
-        "Железная дорога": "#ffb454",
-        "Авто": "#3987ff",
-        "Мультимодальный": "#a78bfa"
+        "Море": "#4c9fba",
+        "Железная дорога": "#b28b50",
+        "Авто": "#718ba7",
+        "Мультимодальный": "#927cad"
     };
 
     for (const order of orders) {
+        if (token !== renderToken) return;
         try {
             const feature = await api(`/api/route/${order.id}`);
-            if (!feature.geometry || !feature.geometry.coordinates) continue;
+            if (token !== renderToken) return;
+            const coords = feature?.geometry?.coordinates;
+            if (!Array.isArray(coords) || coords.length < 2) continue;
+            const points = coords
+                .filter(point => Array.isArray(point) && point.length >= 2 &&
+                    Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])))
+                .map(point => [Number(point[1]), Number(point[0])]);
+            if (points.length < 2) continue;
 
-            // GeoJSON хранит координаты как [долгота, широта], Яндекс — [широта, долгота].
-            const points = feature.geometry.coordinates.map(
-                point => [Number(point[1]), Number(point[0])]
+            const line = L.polyline(points, {
+                color: order.id === selectedId ? "#b59a68" : (colors[order.transport] || "#718ba7"),
+                weight: order.id === selectedId ? 6 : 3.5,
+                opacity: order.id === selectedId ? 0.95 : 0.72
+            }).addTo(routesLayer);
+            line.bindPopup(
+                `<b>Заказ #${order.id}</b><br>${escapeHtml(order.origin)} → ` +
+                `${escapeHtml(order.destination)}<br>${escapeHtml(order.transport)}`
             );
-
-            const line = new ymaps.Polyline(points, {
-                balloonContentHeader: `Заказ #${order.id}`,
-                balloonContentBody:
-                    `${escapeHtml(order.origin)} → ${escapeHtml(order.destination)}<br>` +
-                    `${escapeHtml(order.transport)}`
-            }, {
-                strokeColor: order.id === selectedId
-                    ? "#ffffff"
-                    : colors[order.transport] || "#3987ff",
-                strokeWidth: order.id === selectedId ? 6 : 4,
-                strokeOpacity: 0.85
-            });
-
-            line.events.add("click", () => selectOrder(order.id));
-            map.geoObjects.add(line);
-            mapObjects.push(line);
+            line.on("click", () => selectOrder(order.id));
         } catch (error) {
-            console.error(`Ошибка маршрута #${order.id}:`, error.message);
+            console.warn(`Маршрут #${order.id} недоступен: ${error.message}`);
         }
     }
 }
@@ -973,8 +1012,8 @@ function selectOrder(id) {
     renderOrders();
     renderMap();
 
-    const riskColor = o.delay_risk >= 60 ? "#ff647c" :
-                      o.delay_risk >= 30 ? "#ffb454" : "#36d99a";
+    const riskColor = o.delay_risk >= 60 ? "#b85f5f" :
+                      o.delay_risk >= 30 ? "#b88645" : "#43856a";
 
     document.getElementById("details").innerHTML = `
         <div class="detail-line"><span>Номер заказа</span><strong>#${o.id}</strong></div>
@@ -1002,9 +1041,7 @@ function selectOrder(id) {
         [o.origin_lat, o.origin_lon],
         [o.destination_lat, o.destination_lon]
     ];
-    if (map) {
-        map.setBounds(bounds, { checkZoomRange: true, zoomMargin: 50 }).catch(() => {});
-    }
+    map.fitBounds(bounds, {padding:[50,50]});
 }
 
 async function changeStatus(id) {
@@ -1012,7 +1049,8 @@ async function changeStatus(id) {
         const status = document.getElementById("statusSelect").value;
         await api(`/api/orders/${id}`, "PATCH", {status});
         await loadData();
-    } catch(e) { alert(e.message); }
+        notify("Статус заказа обновлён");
+    } catch(e) { notify(e.message, true); }
 }
 
 async function deleteOrder(id) {
@@ -1020,8 +1058,11 @@ async function deleteOrder(id) {
     try {
         await api(`/api/orders/${id}`, "DELETE");
         selectedId = null;
+        document.getElementById("details").innerHTML =
+            '<div class="empty">Выберите заказ в списке или на карте.</div>';
         await loadData();
-    } catch(e) { alert(e.message); }
+        notify("Заказ удалён");
+    } catch(e) { notify(e.message, true); }
 }
 
 async function deleteCity(id) {
@@ -1029,7 +1070,8 @@ async function deleteCity(id) {
     try {
         await api(`/api/cities/${id}`, "DELETE");
         await loadData();
-    } catch(e) { alert(e.message); }
+        notify("Город удалён");
+    } catch(e) { notify(e.message, true); }
 }
 
 document.getElementById("orderForm").addEventListener("submit", async e => {
@@ -1041,13 +1083,22 @@ document.getElementById("orderForm").addEventListener("submit", async e => {
     form.eta_hours = Number(form.eta_hours);
     form.port_load = Number(form.port_load);
     form.weather_risk = Number(form.weather_risk);
+    if (!form.origin_id || !form.destination_id || cities.length < 2) {
+        notify("Добавьте минимум два города и выберите маршрут", true);
+        return;
+    }
+    if (form.origin_id === form.destination_id) {
+        notify("Город отправления и назначения должны отличаться", true);
+        return;
+    }
 
     try {
         const result = await api("/api/orders", "POST", form);
         e.target.reset();
         await loadData();
         selectOrder(result.id);
-    } catch(err) { alert(err.message); }
+        notify("Заказ успешно создан");
+    } catch(err) { notify(err.message, true); }
 });
 
 document.getElementById("cityForm").addEventListener("submit", async e => {
@@ -1060,19 +1111,11 @@ document.getElementById("cityForm").addEventListener("submit", async e => {
         await api("/api/cities", "POST", form);
         e.target.reset();
         await loadData();
-    } catch(err) { alert(err.message); }
+        notify("Город добавлен");
+    } catch(err) { notify(err.message, true); }
 });
 
-if (window.ymaps) {
-    ymaps.ready(() => {
-        initMap();
-        loadData().catch(error => alert(error.message));
-    });
-} else {
-    document.getElementById("map").innerHTML =
-        '<div style="padding:20px;color:#ffb454">Яндекс Карты не загрузились. Добавьте YANDEX_MAPS_API_KEY в настройки окружения.</div>';
-    loadData().catch(error => alert(error.message));
-}
+loadData().catch(error => notify(`Не удалось загрузить данные: ${error.message}`, true));
 </script>
 </body>
 </html>
@@ -1081,15 +1124,15 @@ if (window.ymaps) {
 
 @app.get("/")
 def index():
-    return PAGE.replace("__YANDEX_MAPS_API_KEY__", YANDEX_MAPS_API_KEY)
+    return render_template_string(PAGE)
 
 
-# Initialize the database both for local runs and production WSGI servers (Gunicorn).
+# Инициализация выполняется и при запуске через gunicorn.
 init_db()
 
 if __name__ == "__main__":
     app.run(
-        debug=False,
+        debug=os.getenv("FLASK_DEBUG", "0") == "1",
         host="0.0.0.0",
         port=int(os.getenv("PORT", "5001"))
     )
