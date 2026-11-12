@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Smart Caspian Transit</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+<aside class="sidebar">
+  <div class="brand"><div class="brandmark">SC</div><div><b>SMART CASPIAN</b><small>TRANSIT ECOSYSTEM</small></div></div>
+  <div class="side-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+  <a class="nav active" href="#overview">▦ <span>Обзор системы</span></a>
+  <a class="nav" href="#shipments">⇄ <span>Грузы и маршруты</span></a>
+  <a class="nav" href="#forecast">◷ <span>Прогноз задержек</span></a>
+  <a class="nav" href="#customs">▤ <span>Цифровая таможня</span></a>
+  <a class="nav" href="#esg">♧ <span>ESG-аналитика</span></a>
+  <div class="sidebar-bottom"><span class="dot"></span> DEMO ENVIRONMENT <small>Прототип · данные условные</small></div>
+</aside>
+<main class="main">
+<header><div><div class="eyebrow">МТК «СЕВЕР — ЮГ» / КАСПИЙСКИЙ УЗЕЛ</div><h1>Центр управления перевозками</h1><p class="muted">Цифровой двойник мультимодального хаба в режиме демонстрации</p></div><div class="top-right"><span class="live"><i></i> СИСТЕМА АКТИВНА</span><div class="avatar">SC</div></div></header>
+<section id="overview" class="stats">
+ <div class="stat"><span>Всего грузов</span><strong id="total">—</strong><small>В цифровом коридоре</small></div>
+ <div class="stat"><span>Высокий риск задержки</span><strong class="red" id="high">—</strong><small>Требуют внимания</small></div>
+ <div class="stat"><span>Средний индекс риска</span><strong id="avg">—<em>%</em></strong><small>По всем отправкам</small></div>
+ <div class="stat"><span>Расчётный CO₂</span><strong id="co2">—<em> кг</em></strong><small>Суммарные выбросы</small></div>
+</section>
+<section class="panel map-panel">
+ <div class="panel-head"><div><div class="eyebrow">DIGITAL TWIN / CASPIAN SEA</div><h2>Карта транспортного коридора</h2></div><span class="tag">СХЕМА МАРШРУТОВ</span></div>
+ <div class="map">
+  <div class="sea-label">КАСПИЙСКОЕ МОРЕ</div>
+  <svg viewBox="0 0 900 260" preserveAspectRatio="none">
+   <path d="M110 175 C260 70 390 210 520 125 S720 75 810 140" fill="none" stroke="#1ac6ad" stroke-width="3" stroke-dasharray="8 7"/>
+   <path d="M110 175 C280 220 390 35 520 125 S710 220 810 140" fill="none" stroke="#5479ff" stroke-width="2" stroke-dasharray="5 7"/>
+  </svg>
+  <div class="port p1"><b>Астрахань</b><small>Россия</small></div><div class="port p2"><b>Махачкала</b><small>Россия</small></div>
+  <div class="port p3"><b>Энзели</b><small>Иран</small></div><div class="port p4"><b>Амирабад</b><small>Иран</small></div>
+  <div class="map-legend"><span><i class="teal"></i> Основной маршрут</span><span><i class="blue"></i> Альтернативный маршрут</span></div>
+ </div>
+ <div class="map-foot"><span><b>4</b> узловых порта</span><span><b>2</b> транспортных сценария</span><span>Обновление: <b id="updated">сейчас</b></span></div>
+</section>
+<section id="shipments" class="panel">
+ <div class="panel-head"><div><div class="eyebrow">LIVE SHIPMENT MONITOR</div><h2>Мониторинг грузов</h2></div><button class="primary" onclick="openModal()">＋ Добавить груз</button></div>
+ <div class="table-wrap"><table><thead><tr><th>ID / ГРУЗ</th><th>МАРШРУТ</th><th>ТРАНСПОРТ</th><th>СТАТУС</th><th>РИСК ЗАДЕРЖКИ</th><th>CO₂, КГ</th><th>ДЕЙСТВИЯ</th></tr></thead><tbody id="shipmentRows"></tbody></table></div>
+</section>
+<section id="forecast" class="two-col">
+ <div class="panel">
+  <div class="eyebrow">PREDICTIVE ANALYTICS</div><h2>Симулятор узкого места</h2>
+  <p class="muted">Измените условия и пересчитайте риск задержки выбранного груза.</p>
+  <label>Выберите отправку<select id="predictId"></select></label>
+  <label>Погодный риск на Каспии <b id="weatherVal">55</b><input id="weather" type="range" min="0" max="100" value="55" oninput="weatherVal.textContent=this.value"></label>
+  <label>Загруженность порта <b id="congestionVal">72</b><input id="congestion" type="range" min="0" max="100" value="72" oninput="congestionVal.textContent=this.value"></label>
+  <label>Задержка ж/д, минут <b id="railVal">35</b><input id="rail" type="range" min="0" max="180" value="35" oninput="railVal.textContent=this.value"></label>
+  <button class="primary full" onclick="runPrediction()">Рассчитать прогноз</button>
+  <div id="predictionResult" class="result muted">Выберите груз и запустите расчёт.</div>
+ </div>
+ <div class="panel" id="customs">
+  <div class="eyebrow">DIGITAL CORRIDOR / PRE-CLEARANCE</div><h2>Цифровая таможня</h2>
+  <p class="muted">Демонстрация предварительной проверки документов до прибытия груза.</p>
+  <div class="customs-box"><div class="shield">✓</div><div><b>Защищённый журнал событий</b><small>Каждая операция получает SHA-256 хеш и ссылку на предыдущую запись.</small></div></div>
+  <label>Груз для оформления<select id="customsId"></select></label>
+  <button class="primary full" onclick="clearCustoms()">Выполнить pre-clearance</button>
+  <div id="customsMessage" class="result muted">Выберите отправку для предварительного оформления.</div>
+  <p class="tiny">Это имитация защищённого API и журнала аудита, не подключение к реальной таможне или публичному блокчейну.</p>
+ </div>
+</section>
+<section id="esg" class="panel">
+ <div class="panel-head"><div><div class="eyebrow">SUSTAINABILITY / ESG</div><h2>Экологическая эффективность</h2></div><span class="tag green">CO₂ ESTIMATION</span></div>
+ <div class="esg-grid"><div><strong id="esgTotal">— кг</strong><small>Расчётные выбросы по текущим грузам</small></div><div><strong>Море</strong><small>0,018 кг CO₂ / тонно-км</small></div><div><strong>Ж/Д + море</strong><small>0,035 кг CO₂ / тонно-км</small></div><div><strong>Авто + море</strong><small>0,095 кг CO₂ / тонно-км</small></div></div>
+ <p class="tiny">Оценка на основе демонстрационных коэффициентов. В промышленной версии коэффициенты уточняются по типу судна, топлива, загрузке и фактическому плечу перевозки.</p>
+</section>
+<section class="panel">
+ <div class="panel-head"><div><div class="eyebrow">AUDIT TRAIL</div><h2>Журнал цифрового коридора</h2></div><span class="tag">SHA-256 DEMO</span></div>
+ <div id="events" class="events"></div>
+</section>
+<footer>SMART CASPIAN TRANSIT <span>Прототип для хакатона · МТК «Север — Юг»</span></footer>
+</main>
+</div>
+<div id="modal" class="modal hidden"><div class="modal-card"><button class="close" onclick="closeModal()">×</button><div class="eyebrow">NEW SHIPMENT</div><h2>Регистрация груза</h2>
+<label>Наименование груза<input id="cargo" placeholder="Например, электроника"></label>
+<div class="form-grid"><label>Откуда<input id="origin" value="Астрахань"></label><label>Куда<input id="destination" value="Энзели"></label></div>
+<label>Тип перевозки<select id="mode"><option>Ж/Д + море</option><option>Море</option><option>Авто + море</option></select></label>
+<div class="form-grid"><label>Вес, тонн<input id="weight" type="number" value="10"></label><label>Расстояние, км<input id="distance" type="number" value="650"></label></div>
+<button class="primary full" onclick="addShipment()">Создать цифровую карточку</button><div id="addMessage" class="result"></div>
+</div></div>
+<script src="/static/app.js"></script>
+</body></html>
