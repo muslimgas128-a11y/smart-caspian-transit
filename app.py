@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ORS_API_KEY = os.getenv("ORS_API_KEY", "").strip()
+YANDEX_MAPS_API_KEY = os.getenv("YANDEX_MAPS_API_KEY", "").strip()
 
 
 app = Flask(__name__)
@@ -534,8 +535,6 @@ PAGE = r"""
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Smart Caspian Transit</title>
 
-<link rel="stylesheet"
- href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
@@ -653,9 +652,6 @@ label { display:block; color:var(--muted); font-size:11px; font-weight:600; lett
 }
 #toast.show { opacity:1; transform:translateY(0); }
 #toast.error { background:#994e4b; }
-.leaflet-container { font-family:'DM Sans',Arial,sans-serif; }
-.leaflet-control-layers,.leaflet-control-zoom a { border:1px solid #e5e3dd!important; box-shadow:0 3px 12px rgba(0,0,0,.07)!important; }
-.leaflet-popup-content-wrapper,.leaflet-popup-tip { background:#fff; color:var(--text); }
 @media(max-width:1050px) { .layout { grid-template-columns:minmax(0,1fr) 320px; } }
 @media(max-width:900px) { .layout { grid-template-columns:1fr; } .side { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; } }
 @media(max-width:620px) {
@@ -671,6 +667,125 @@ label { display:block; color:var(--muted); font-size:11px; font-weight:600; lett
     .section-head { padding:12px 14px; }
     .order { padding:12px 13px; }
 }
+
+
+/* ================= WHITE PREMIUM THEME ================= */
+:root {
+    --bg:#f4f5f7;
+    --panel:#ffffff;
+    --panel2:#f7f7f5;
+    --border:#e7e5df;
+    --text:#202329;
+    --muted:#85847f;
+    --blue:#b08b50;
+    --cyan:#a9854c;
+    --green:#34866a;
+    --orange:#bd8740;
+    --red:#bd5b58;
+}
+html { scroll-behavior:smooth; }
+body {
+    background:var(--bg);
+    color:var(--text);
+    font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
+    letter-spacing:-.01em;
+}
+.topbar {
+    position:sticky; top:0; z-index:500;
+    padding:19px clamp(16px,3vw,38px);
+    background:rgba(255,255,255,.94);
+    backdrop-filter:blur(16px);
+    border-bottom:1px solid var(--border);
+    box-shadow:0 4px 18px rgba(30,30,25,.035);
+}
+.logo { color:#242520; font-size:19px; letter-spacing:.055em; }
+.logo span { color:#a9854c; }
+.subtitle { color:#92918b; letter-spacing:.025em; }
+.live { color:#44866b; font-weight:650; letter-spacing:.035em; }
+.layout {
+    width:min(1600px,100%);
+    margin:0 auto;
+    padding:clamp(14px,2vw,28px);
+    grid-template-columns:minmax(0,1fr) minmax(300px,350px);
+    gap:20px;
+}
+.card,.panel {
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:16px;
+    box-shadow:0 5px 22px rgba(31,31,24,.035);
+}
+.stat {
+    padding:19px 20px;
+    background:linear-gradient(145deg,#fff 0%,#fcfbf8 100%);
+    transition:transform .18s ease,box-shadow .18s ease;
+}
+.stat:hover { transform:translateY(-2px); box-shadow:0 9px 25px rgba(31,31,24,.07); }
+.stat small { color:#898780; font-size:12px; font-weight:550; }
+.stat strong { color:#252620; font-size:29px; font-weight:700; letter-spacing:-.045em; }
+.section-head {
+    padding:17px 20px;
+    border-bottom:1px solid #eeece7;
+}
+.section-head h3,.panel h3 { color:#282923; font-weight:680; letter-spacing:-.025em; }
+#map { height:490px; background:#eeede8; }
+.panel { padding:19px; }
+.panel h3 { margin-bottom:15px; }
+input,select {
+    color:#292a27;
+    background:#fbfbfa;
+    border:1px solid #e4e2dc;
+    border-radius:9px;
+    outline:none;
+    transition:border-color .15s,box-shadow .15s,background .15s;
+}
+input::placeholder { color:#b0aea7; }
+input:focus,select:focus {
+    border-color:#b99a68;
+    background:#fff;
+    box-shadow:0 0 0 3px rgba(176,139,80,.12);
+}
+label { color:#85837c; font-weight:600; letter-spacing:.015em; }
+button {
+    color:#fff;
+    background:#a9854c;
+    border-radius:9px;
+    font-weight:650;
+    transition:transform .15s,filter .15s,box-shadow .15s;
+}
+button:hover { filter:brightness(1.04); box-shadow:0 4px 12px rgba(130,99,48,.16); }
+button:active { transform:translateY(1px); }
+button:focus-visible { outline:3px solid rgba(176,139,80,.25); outline-offset:2px; }
+button.secondary { color:#62543f; background:#f2eee6; border:1px solid #e8dfd0; }
+button.danger { color:#a84d49; background:#f8ecea; border:1px solid #f0d9d5; }
+.order { border-bottom:1px solid #efeee9; padding:15px 19px; transition:background .15s; }
+.order:hover,.order.selected { background:#faf8f3; }
+.order strong { color:#292a27; font-weight:680; }
+.order small,.empty { color:#929089; }
+.route { color:#55564f; }
+.status { color:#77766f; background:#f0efeb; font-weight:650; }
+.status.green { color:#347a60; background:#eaf4ee; }
+.status.orange { color:#9a6b2f; background:#f8f0e2; }
+.status.red { color:#a64f4b; background:#f8eae8; }
+.detail-line { border-bottom:1px solid #efeee9; color:#353630; }
+.detail-line span:first-child { color:#89877f; }
+.city-row { border-bottom:1px solid #efeee9; color:#393a34; }
+.notice { color:#89877f; }
+.side { gap:17px; }
+@media(max-width:900px) {
+    .layout { grid-template-columns:1fr; }
+    .side { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; }
+    .side > .panel:last-child { grid-column:1/-1; }
+}
+@media(max-width:600px) {
+    .side { display:flex; }
+    .stats { gap:9px; }
+    .stat { padding:14px; }
+    .stat strong { font-size:24px; }
+    #map { height:360px; }
+    .section-head { padding:14px; }
+}
+
 </style>
 </head>
 
@@ -798,7 +913,7 @@ label { display:block; color:var(--muted); font-size:11px; font-weight:600; lett
 </aside>
 </main>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://api-maps.yandex.ru/2.1/?apikey=__YANDEX_MAPS_API_KEY__&lang=ru_RU" type="text/javascript"></script>
 
 <div id="toast" role="status" aria-live="polite"></div>
 <script>
@@ -812,33 +927,34 @@ function notify(message, isError=false) {
     toastTimer = setTimeout(() => { el.className = ""; }, 3200);
 }
 
-const map = L.map("map").setView([35, 55], 4);
-
-L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-    subdomains: "abcd",
-    maxZoom: 20,
-    attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
-}).addTo(map);
-
-const railwayLayer = L.tileLayer(
-    "https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png",
-    {
-        attribution: "OpenRailwayMap",
-        maxZoom: 19
-    }
-);
-
-L.control.layers(
-    null,
-    {"Железнодорожные пути": railwayLayer}
-).addTo(map);
-
 let cities = [];
 let orders = [];
-let markersLayer = L.layerGroup().addTo(map);
-let routesLayer = L.layerGroup().addTo(map);
 let selectedId = null;
+let map = null;
+let mapObjects = [];
+let mapRenderToken = 0;
 let renderToken = 0;
+
+function initMap() {
+    const container = document.getElementById("map");
+    if (!window.ymaps) {
+        container.innerHTML = '<div style="padding:20px;color:#9b5b43">Не удалось загрузить Яндекс Карты. Проверьте YANDEX_MAPS_API_KEY.</div>';
+        return false;
+    }
+    if (map) return true;
+    map = new ymaps.Map("map", {
+        center: [35, 55],
+        zoom: 4,
+        controls: ["zoomControl", "typeSelector", "fullscreenControl"]
+    }, { suppressMapOpenBlock: true });
+    return true;
+}
+
+function clearMapObjects() {
+    if (!map) return;
+    map.geoObjects.removeAll();
+    mapObjects = [];
+}
 
 async function api(url, method="GET", body=null) {
     const options = {method, headers: {"Accept": "application/json"}};
@@ -958,13 +1074,22 @@ function renderOrders() {
 
 
 async function renderMap() {
+    if (!map) return;
     const token = ++renderToken;
-    markersLayer.clearLayers();
-    routesLayer.clearLayers();
+    clearMapObjects();
 
     cities.forEach(city => {
-        const marker = L.marker([city.lat, city.lon]).addTo(markersLayer);
-        marker.bindPopup(`<b>${escapeHtml(city.name)}</b><br>${escapeHtml(city.country)}`);
+        const marker = new ymaps.Placemark(
+            [Number(city.lat), Number(city.lon)],
+            {
+                balloonContentHeader: escapeHtml(city.name),
+                balloonContentBody: escapeHtml(city.country),
+                hintContent: `${escapeHtml(city.name)}, ${escapeHtml(city.country)}`
+            },
+            { preset: "islands#blueCircleDotIcon" }
+        );
+        map.geoObjects.add(marker);
+        mapObjects.push(marker);
     });
 
     const colors = {
@@ -981,28 +1106,30 @@ async function renderMap() {
             if (token !== renderToken) return;
             const coords = feature?.geometry?.coordinates;
             if (!Array.isArray(coords) || coords.length < 2) continue;
+
+            // GeoJSON uses [longitude, latitude]; Yandex Maps uses [latitude, longitude].
             const points = coords
                 .filter(point => Array.isArray(point) && point.length >= 2 &&
                     Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])))
                 .map(point => [Number(point[1]), Number(point[0])]);
             if (points.length < 2) continue;
 
-            const line = L.polyline(points, {
-                color: order.id === selectedId ? "#b59a68" : (colors[order.transport] || "#718ba7"),
-                weight: order.id === selectedId ? 6 : 3.5,
-                opacity: order.id === selectedId ? 0.95 : 0.72
-            }).addTo(routesLayer);
-            line.bindPopup(
-                `<b>Заказ #${order.id}</b><br>${escapeHtml(order.origin)} → ` +
-                `${escapeHtml(order.destination)}<br>${escapeHtml(order.transport)}`
-            );
-            line.on("click", () => selectOrder(order.id));
+            const line = new ymaps.Polyline(points, {
+                balloonContentHeader: `Заказ #${order.id}`,
+                balloonContentBody: `${escapeHtml(order.origin)} → ${escapeHtml(order.destination)}<br>${escapeHtml(order.transport)}`
+            }, {
+                strokeColor: order.id === selectedId ? "#b59a68" : (colors[order.transport] || "#718ba7"),
+                strokeWidth: order.id === selectedId ? 6 : 4,
+                strokeOpacity: order.id === selectedId ? 0.95 : 0.78
+            });
+            line.events.add("click", () => selectOrder(order.id));
+            map.geoObjects.add(line);
+            mapObjects.push(line);
         } catch (error) {
             console.warn(`Маршрут #${order.id} недоступен: ${error.message}`);
         }
     }
 }
-
 
 function selectOrder(id) {
     const o = orders.find(x => x.id === id);
@@ -1037,11 +1164,13 @@ function selectOrder(id) {
         <button class="primary danger" onclick="deleteOrder(${o.id})">Удалить заказ</button>
     `;
 
-    const bounds = [
-        [o.origin_lat, o.origin_lon],
-        [o.destination_lat, o.destination_lon]
-    ];
-    map.fitBounds(bounds, {padding:[50,50]});
+    if (map) {
+        const bounds = [
+            [Number(o.origin_lat), Number(o.origin_lon)],
+            [Number(o.destination_lat), Number(o.destination_lon)]
+        ];
+        map.setBounds(bounds, { checkZoomRange: true, zoomMargin: 50 }).catch(() => {});
+    }
 }
 
 async function changeStatus(id) {
@@ -1115,7 +1244,17 @@ document.getElementById("cityForm").addEventListener("submit", async e => {
     } catch(err) { notify(err.message, true); }
 });
 
-loadData().catch(error => notify(`Не удалось загрузить данные: ${error.message}`, true));
+if (window.ymaps) {
+    ymaps.ready(() => {
+        if (initMap()) {
+            loadData().catch(error => notify(`Не удалось загрузить данные: ${error.message}`, true));
+        }
+    });
+} else {
+    document.getElementById("map").innerHTML =
+        '<div style="padding:20px;color:#9b5b43">Яндекс Карты не загрузились. Проверьте YANDEX_MAPS_API_KEY.</div>';
+    loadData().catch(error => notify(`Не удалось загрузить данные: ${error.message}`, true));
+}
 </script>
 </body>
 </html>
@@ -1124,7 +1263,7 @@ loadData().catch(error => notify(`Не удалось загрузить дан�
 
 @app.get("/")
 def index():
-    return render_template_string(PAGE)
+    return PAGE.replace("__YANDEX_MAPS_API_KEY__", YANDEX_MAPS_API_KEY)
 
 
 # Инициализация выполняется и при запуске через gunicorn.
