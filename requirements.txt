@@ -1,1 +1,7 @@
 Flask>=3.0,<4.0
+gunicorn
+requests
+networkx
+osmnx
+searoute
+python-dotenv
