@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ORS_API_KEY = os.getenv("ORS_API_KEY", "").strip()
+YANDEX_MAPS_API_KEY = os.getenv("YANDEX_MAPS_API_KEY", "").strip()
 
 
 app = Flask(__name__)
@@ -484,9 +485,6 @@ PAGE = r"""
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Smart Caspian Transit</title>
 
-<link rel="stylesheet"
- href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-
 <style>
 :root {
     --bg:#080d18;
@@ -771,31 +769,33 @@ label {
 </aside>
 </main>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://api-maps.yandex.ru/2.1/?apikey=__YANDEX_MAPS_API_KEY__&lang=ru_RU" type="text/javascript"></script>
 
 <script>
-const map = L.map("map").setView([35, 55], 4);
+let map = null;
+let mapObjects = [];
 
-// Основная карта: CARTO Voyager вместо стандартных тайлов OpenStreetMap.
-// Это нейтральный стиль карты без декоративных флаговых маркеров.
-L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
-    subdomains: "abcd",
-    maxZoom: 20,
-    attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
-}).addTo(map);
-
-const railwayLayer = L.tileLayer(
-    "https://{s}.tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png",
-    {
-        attribution: "OpenRailwayMap",
-        maxZoom: 19
+function initMap() {
+    if (!window.ymaps) {
+        document.getElementById("map").innerHTML =
+            '<div style="padding:20px;color:#ffb454">Не удалось загрузить Яндекс Карты. Проверьте YANDEX_MAPS_API_KEY в настройках Render.</div>';
+        return;
     }
-);
 
-L.control.layers(
-    null,
-    {"Железнодорожные пути": railwayLayer}
-).addTo(map);
+    map = new ymaps.Map("map", {
+        center: [35, 55],
+        zoom: 4,
+        controls: ["zoomControl", "typeSelector", "fullscreenControl"]
+    }, {
+        suppressMapOpenBlock: true
+    });
+}
+
+function clearMapObjects() {
+    if (!map) return;
+    map.geoObjects.removeAll();
+    mapObjects = [];
+}
 
 let cities = [];
 let orders = [];
@@ -908,22 +908,21 @@ function renderOrders() {
 
 
 async function renderMap() {
-    markers.forEach(marker => map.removeLayer(marker));
-    markers = [];
-
-    if (routeLayer) {
-        map.removeLayer(routeLayer);
-        routeLayer = null;
-    }
+    if (!map) return;
+    clearMapObjects();
 
     cities.forEach(city => {
-        const marker = L.marker([city.lat, city.lon]).addTo(map);
-
-        marker.bindPopup(
-            `<b>${escapeHtml(city.name)}</b><br>${escapeHtml(city.country)}`
+        const marker = new ymaps.Placemark(
+            [Number(city.lat), Number(city.lon)],
+            {
+                balloonContentHeader: escapeHtml(city.name),
+                balloonContentBody: escapeHtml(city.country),
+                hintContent: `${escapeHtml(city.name)}, ${escapeHtml(city.country)}`
+            },
+            { preset: "islands#blueCircleDotIcon" }
         );
-
-        markers.push(marker);
+        map.geoObjects.add(marker);
+        mapObjects.push(marker);
     });
 
     const colors = {
@@ -936,40 +935,31 @@ async function renderMap() {
     for (const order of orders) {
         try {
             const feature = await api(`/api/route/${order.id}`);
+            if (!feature.geometry || !feature.geometry.coordinates) continue;
 
-            if (!feature.geometry ||
-                !feature.geometry.coordinates) {
-                continue;
-            }
-
+            // GeoJSON хранит координаты как [долгота, широта], Яндекс — [широта, долгота].
             const points = feature.geometry.coordinates.map(
-                point => [point[1], point[0]]
+                point => [Number(point[1]), Number(point[0])]
             );
 
-            const line = L.polyline(points, {
-                color: order.id === selectedId
+            const line = new ymaps.Polyline(points, {
+                balloonContentHeader: `Заказ #${order.id}`,
+                balloonContentBody:
+                    `${escapeHtml(order.origin)} → ${escapeHtml(order.destination)}<br>` +
+                    `${escapeHtml(order.transport)}`
+            }, {
+                strokeColor: order.id === selectedId
                     ? "#ffffff"
                     : colors[order.transport] || "#3987ff",
-                weight: order.id === selectedId ? 6 : 4,
-                opacity: 0.85
-            }).addTo(map);
+                strokeWidth: order.id === selectedId ? 6 : 4,
+                strokeOpacity: 0.85
+            });
 
-            line.bindPopup(
-                `<b>Заказ #${order.id}</b><br>` +
-                `${escapeHtml(order.origin)} → ` +
-                `${escapeHtml(order.destination)}<br>` +
-                `${escapeHtml(order.transport)}`
-            );
-
-            line.on("click", () => selectOrder(order.id));
-
-            markers.push(line);
-
+            line.events.add("click", () => selectOrder(order.id));
+            map.geoObjects.add(line);
+            mapObjects.push(line);
         } catch (error) {
-            console.error(
-                `Ошибка маршрута #${order.id}:`,
-                error.message
-            );
+            console.error(`Ошибка маршрута #${order.id}:`, error.message);
         }
     }
 }
@@ -1012,7 +1002,9 @@ function selectOrder(id) {
         [o.origin_lat, o.origin_lon],
         [o.destination_lat, o.destination_lon]
     ];
-    map.fitBounds(bounds, {padding:[50,50]});
+    if (map) {
+        map.setBounds(bounds, { checkZoomRange: true, zoomMargin: 50 }).catch(() => {});
+    }
 }
 
 async function changeStatus(id) {
@@ -1071,7 +1063,16 @@ document.getElementById("cityForm").addEventListener("submit", async e => {
     } catch(err) { alert(err.message); }
 });
 
-loadData();
+if (window.ymaps) {
+    ymaps.ready(() => {
+        initMap();
+        loadData().catch(error => alert(error.message));
+    });
+} else {
+    document.getElementById("map").innerHTML =
+        '<div style="padding:20px;color:#ffb454">Яндекс Карты не загрузились. Добавьте YANDEX_MAPS_API_KEY в настройки окружения.</div>';
+    loadData().catch(error => alert(error.message));
+}
 </script>
 </body>
 </html>
@@ -1080,7 +1081,7 @@ loadData();
 
 @app.get("/")
 def index():
-    return render_template_string(PAGE)
+    return PAGE.replace("__YANDEX_MAPS_API_KEY__", YANDEX_MAPS_API_KEY)
 
 
 # Initialize the database both for local runs and production WSGI servers (Gunicorn).
