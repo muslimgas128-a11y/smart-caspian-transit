@@ -338,7 +338,7 @@ def api_data():
 
 @app.post("/api/cities")
 def add_city():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
 
     try:
         name = str(data["name"]).strip()
@@ -391,7 +391,7 @@ def delete_city(city_id):
 
 @app.post("/api/orders")
 def add_order():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
 
     try:
         cargo = str(data["cargo"]).strip()
@@ -443,7 +443,7 @@ def add_order():
 
 @app.patch("/api/orders/<int:order_id>")
 def update_order(order_id):
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     status = data.get("status")
 
     allowed = ["В пути", "На таможне", "Доставлен", "Задержан"]
@@ -776,8 +776,12 @@ label {
 <script>
 const map = L.map("map").setView([35, 55], 4);
 
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "&copy; OpenStreetMap contributors"
+// Основная карта: CARTO Voyager вместо стандартных тайлов OpenStreetMap.
+// Это нейтральный стиль карты без декоративных флаговых маркеров.
+L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+    subdomains: "abcd",
+    maxZoom: 20,
+    attribution: "&copy; OpenStreetMap contributors &copy; CARTO"
 }).addTo(map);
 
 const railwayLayer = L.tileLayer(
@@ -807,7 +811,17 @@ async function api(url, method="GET", body=null) {
     }
 
     const response = await fetch(url, options);
-    const data = await response.json();
+    const raw = await response.text();
+    let data;
+
+    try {
+        data = JSON.parse(raw);
+    } catch (error) {
+        throw new Error(
+            `Сервер вернул не JSON (HTTP ${response.status}). ` +
+            `Проверь адрес API и журнал сервера. ${raw.slice(0, 180)}`
+        );
+    }
 
     if (!response.ok) throw new Error(data.error || "Ошибка запроса");
     return data;
@@ -1069,10 +1083,12 @@ def index():
     return render_template_string(PAGE)
 
 
+# Initialize the database both for local runs and production WSGI servers (Gunicorn).
+init_db()
+
 if __name__ == "__main__":
-    init_db()
     app.run(
-        debug=True,
-        host="127.0.0.1",
+        debug=False,
+        host="0.0.0.0",
         port=int(os.getenv("PORT", "5001"))
     )
